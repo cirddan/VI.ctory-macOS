@@ -1550,7 +1550,8 @@ pub(crate) mod tests {
             title(PAGE + 40).write_volatile(0x11);
             title(2 * PAGE + 50).write_volatile(0x22);
         }
-        // The shaders marked pages 0 and 1.
+        // The shaders marked pages 0 and 1, as at a submission's end.
+        let _submission = host().expect("a host GPU").as_a_submission();
         let bits = b.data as *mut u32;
         for n in [base, base + 1] {
             // SAFETY: a dword of the mapped bitmap.
@@ -1586,7 +1587,9 @@ pub(crate) mod tests {
         copy.writing(p, len, true);
         copy.write_host((p + 10) as u64, &[0xaa]);
         copy.write_host((p + PAGE + 10) as u64, &[0xbb]);
-        // Page 0 marked by another shader, page 1 by one using title memory.
+        // Page 0 marked by another shader, page 1 by one using title memory,
+        // as at a submission's end.
+        let _submission = host().expect("a host GPU").as_a_submission();
         for (b, n) in [(others, base), (memory, base + 1)] {
             // SAFETY: a dword of the mapped bitmap.
             unsafe { *(b.data as *mut u32).add(n / 32) |= 1 << (n % 32) };

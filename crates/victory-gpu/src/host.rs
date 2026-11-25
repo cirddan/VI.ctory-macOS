@@ -1202,6 +1202,18 @@ impl Host {
         Some(Quiet { _holding: Holding::enter(), _held: held })
     }
 
+    /// The submission lock for a test that stands in for a submission's
+    /// end, on any host: it marks pages in the views' bitmaps as shaders do
+    /// and copies them back (`crate::shadow::copy_back_marks`), which
+    /// [`Self::execute`] does under this lock. Without it another test's
+    /// submission can take the bitmap word the test is marking and clear
+    /// its bit unseen (issue #31).
+    #[cfg(test)]
+    pub(crate) fn as_a_submission(&self) -> Quiet<'_> {
+        let held = self.submitted.lock().unwrap_or_else(|e| e.into_inner());
+        Quiet { _holding: Holding::enter(), _held: held }
+    }
+
     /// Runs closed lists and waits for them.
     pub(crate) fn execute(&self, runs: &[&HostList]) {
         // One submission at a time from preparation to copy-back: snapshots
