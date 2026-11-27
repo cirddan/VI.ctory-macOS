@@ -142,6 +142,7 @@ fn typed_store_program(soffset: u8) -> Result<HostShader, crate::ShaderError> {
         uav_size_level0: false,
         host_wave32: false,
         view_marks: true,
+        loop_entry_exit: false,
     })?;
     assert!(lowered.view_marks, "the typed store marks its view");
     assert_eq!(
@@ -313,6 +314,7 @@ fn program() -> HostShader {
         narrow_waves: false,
         uav_size_level0: false,
         view_marks: false,
+        loop_entry_exit: false,
     })
     .expect("lower");
     assert!(l.memory && l.memory_writes && l.view_addresses);
@@ -528,6 +530,7 @@ fn runs_from_just_before_a_copy_read_its_first_dwords() {
         host_wave32: false,
         narrow_waves: false,
         view_marks: false,
+        loop_entry_exit: false,
     })
     .expect("lower");
     assert!(l.memory);
@@ -719,6 +722,7 @@ fn root_views_read_their_copy_and_zeros_past_it() {
             narrow_waves: false,
             uav_size_level0: false,
             view_marks: false,
+            loop_entry_exit: false,
         })
         .expect("lower")
     };
@@ -881,6 +885,7 @@ fn writes_through_views_mark_their_pages() {
         narrow_waves: false,
         uav_size_level0: false,
         view_marks: true,
+        loop_entry_exit: false,
     })
     .expect("lower");
     assert!(l.view_marks && !l.memory, "marks without the page table");
@@ -1127,6 +1132,7 @@ fn heap_direct_texture_reads_mark_their_heap_index() {
             bias_as_gradients: false,
             narrow_waves: false,
             uav_size_level0: false,
+            loop_entry_exit: false,
         })
         .expect("lower")
     };
@@ -1262,6 +1268,7 @@ fn straddling_writes_across_256mib_and_4gib_boundaries_mark_exact_pages() {
         uav_size_level0: false,
         host_wave32: false,
         view_marks: false,
+        loop_entry_exit: false,
     })
     .expect("lower");
     assert!(l.memory && l.memory_writes);
@@ -1468,6 +1475,7 @@ fn early_depth_stencil_skips_occluded_read_mark_pixel_shaders() {
         uav_size_level0: false,
         host_wave32: false,
         view_marks: false,
+        loop_entry_exit: false,
     })
     .expect("vs lower");
     let vs_shader = HostShader {
@@ -1548,6 +1556,7 @@ fn early_depth_stencil_skips_occluded_read_mark_pixel_shaders() {
         uav_size_level0: false,
         host_wave32: false,
         view_marks: true,
+        loop_entry_exit: false,
     })
     .expect("ps lower");
     assert!(ps_lowered.early_depth_stencil);
