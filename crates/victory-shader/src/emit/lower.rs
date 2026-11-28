@@ -24,6 +24,7 @@ mod atomics;
 mod barriers;
 mod bvh;
 pub(super) mod entry_exit;
+mod descriptor_records;
 mod f64;
 mod first_lane;
 /// Format loads that move 16-bit halves without the d16 form, a child
@@ -4955,7 +4956,10 @@ impl<'a> Lower<'a> {
                 .find_map(|&(s, _)| use_of(s))
         });
         let Some((at, first)) = use_at else {
-            return self.view_addresses(inst, site, code, count);
+            return match self.unused_buffer(site) {
+                Some(props) => self.buffer_records(inst, site, code, count, props),
+                None => self.view_addresses(inst, site, code, count),
+            };
         };
         let src = Source::Loaded { load: site, first };
         let used = self.used_kind(&src);
