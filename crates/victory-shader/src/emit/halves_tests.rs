@@ -189,6 +189,7 @@ fn lower_halves_limited(
             uav_size_level0: false,
             halves_rendezvous: true,
             host_wave32,
+            loop_entry_exit: false,
     };
     let threads = match &native.io {
         StageIo::Cs(cs) => cs.threads.iter().product::<u32>(),
@@ -3061,6 +3062,7 @@ fn thread_ticket_relabels_2d_and_partial_tail_groups_bijectively() {
                 atomic_umax: false,
                 bias_as_gradients: false,
                 host_wave32: true,
+                loop_entry_exit: false,
                 narrow_waves: false,
                 uav_size_level0: false,
             })
@@ -3407,6 +3409,7 @@ fn lane_masks_in_divergent_code_meet_between_halves() {
         narrow_waves: false,
         halves_rendezvous: false,
         host_wave32: true,
+        loop_entry_exit: false,
     });
     let why = off.err().map(|e| e.to_string()).unwrap_or_else(|| "translated".into());
     assert!(
@@ -4362,12 +4365,6 @@ fn a_first_lane_read_of_a_multiply_accumulate_matches_the_console_on_every_gpu()
     }
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
-
-            loop_entry_exit: false,
-
-                loop_entry_exit: false,
-
-        loop_entry_exit: false,
 
 /// [`lowered_with`] in halves with narrow waves (the game's form under
 /// D3DMetal), early-exited lanes leaving later loops at once where `on`
