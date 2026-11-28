@@ -627,21 +627,24 @@ fn a_waterfall_loop_that_only_sizes_takes_the_kind_of_the_sampled_one() {
 }
 
 #[test]
-fn permlanex16_lowers_in_wave32_and_wave64() {
-    let words = [
-        0xD778_0001,
-        0x0004_0100, // v_permlanex16_b32 v1, v0, s0, s1
-        0xD834_0000,
-        0x0000_0100, // ds_write_b32 v0, v1
-        S_ENDPGM,
-    ];
+fn permlane16_and_permlanex16_lower_in_wave32_and_wave64() {
     let layout = vec![RootParam {
         sgprs: 2,
         ..root(RootType::Constants, 0, 0)
     }];
-    for wave64 in [false, true] {
-        let result = lower_wave(&words, layout.clone(), vec![], wave64).unwrap();
-        assert!(result.wave_ops);
+    for opcode in [0xD777_0001, 0xD778_0001] {
+        let words = [
+            opcode,
+            0x0004_0100, // v_permlane[x]16_b32 v1, v0, s0, s1
+            0xD834_0000,
+            0x0000_0100, // ds_write_b32 v0, v1
+            S_ENDPGM,
+        ];
+        for wave64 in [false, true] {
+            let result = lower_wave(&words, layout.clone(), vec![], wave64).unwrap();
+            assert!(result.wave_ops);
+            assert_eq!(result.barriers, 0);
+        }
     }
 }
 
@@ -1632,6 +1635,16 @@ fn a_read_before_divergent_writes_syncs_where_all_lanes_run() {
 /// (`host_wave32`, a host of 32-lane waves): the console wave runs as two
 /// host waves, which pass values between them behind group barriers.
 fn lowered_halves(words: &[u32], lanes: u32) -> Result<Lowered, crate::ShaderError> {
+    lowered_halves_lds(words, lanes, 0)
+}
+
+/// [`lowered_halves`] of a program declaring `lds_bytes` of LDS (a
+/// multiple of 512).
+fn lowered_halves_lds(
+    words: &[u32],
+    lanes: u32,
+    lds_bytes: u32,
+) -> Result<Lowered, crate::ShaderError> {
     let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
     let native = NativeProgram {
         stage: HwStage::Cs,
@@ -1640,8 +1653,8 @@ fn lowered_halves(words: &[u32], lanes: u32) -> Result<Lowered, crate::ShaderErr
         layout: vec![],
         used: vec![],
         io: StageIo::Cs(ComputeIo {
-            // Two user-data SGPRs, no LDS.
-            rsrc2: 2 << 1,
+            // Two user-data SGPRs, LDS in 512-byte granules.
+            rsrc2: 2 << 1 | (lds_bytes / 512) << 15,
             threads: [lanes, 1, 1],
         }),
         code,
@@ -1671,6 +1684,49 @@ fn lowered_halves(words: &[u32], lanes: u32) -> Result<Lowered, crate::ShaderErr
         view_marks: false,
         loop_entry_exit: false,
     })
+}
+
+/// A ballot read as data in a 1,024-thread wave64 program whose own LDS is
+/// the host's whole 32 KiB: the halves pass it through dwords borrowed from
+/// that LDS, saved and put back behind three more group barriers. Before,
+/// the program was refused.
+#[test]
+fn a_halves_exchange_borrows_a_full_lds() {
+    let w = [
+        0x3402_0082, // v_lshlrev_b32 v1, 2, v0
+        0xD834_0000,
+        0x0000_0001, // ds_write_b32 v1, v0
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xBF8A_0000, // s_barrier
+        0x7D88_00A8, // v_cmp_gt_u32 vcc, 40, v0
+        0xBE8C_106A, // s_bcnt1_i32_b64 s12, vcc
+        0x7E06_020C, // v_mov_b32 v3, s12
+        0xD834_0000,
+        0x0000_0301, // ds_write_b32 v1, v3
+        S_ENDPGM,
+    ];
+    // (The IR leaves out `s_waitcnt`.)
+    let p = wave64(&w);
+    let names: Vec<_> = p.blocks[0].insts.iter().map(|i| i.name()).collect();
+    assert_eq!(
+        names,
+        [
+            "v_lshlrev_b32",
+            "ds_write_b32",
+            "s_barrier",
+            "v_cmp_gt_u32",
+            "s_bcnt1_i32_b64",
+            "v_mov_b32",
+            "ds_write_b32",
+            "s_endpgm",
+        ]
+    );
+    lowered_halves_lds(&w, 1024, 16384).expect("LDS with room");
+    let full = lowered_halves_lds(&w, 1024, 32768).expect("a full LDS");
+    assert_eq!(full.wave_size, Some(32));
+    // The program's own barrier, the exchange's two, and three for the
+    // borrowed dwords (no thread ticket: that needs a dword of LDS too).
+    assert_eq!(full.barriers, 1 + 2 + 3);
 }
 
 /// A uniform outer loop (on the scalar `s20`) holding a divergent inner
@@ -3142,16 +3198,35 @@ fn scalar_buffer_loads_read_four_dwords_a_load() {
     for (op, n, mask) in [(13, 2, 3), (15, 3, 7), (14, 4, 15)] {
         assert_eq!(root_view_load(op, n).raw_load_args, [(None, Some(mask))]);
     }
-    // From title memory: the page table's entry (two dwords) and the
-    // constants, then a dword a load again in a block of their own, which
-    // only lanes whose run wraps (it starts before its copy) run.
+    // From title memory: the page table's entry (two dwords) for the run's
+    // first byte and, in a block that only lanes whose run crosses onto the
+    // next page run, for its last; the constants four dwords a load, each
+    // dword also read through the next page's copy (a load each); then a
+    // dword a load again, the same way, in a block of their own, which only
+    // lanes whose run wraps (it starts before its copy) run.
     let memory = memory_constants(4);
-    assert_eq!(wide_loads(&memory)[1..], [(None, Some(15)); 4]);
-    assert_eq!(memory.raw_load_args[7..], [(None, Some(1)); 16]);
-    let [blocks, _] = &memory.raw_loads;
-    let wraps = blocks[7];
-    assert!(blocks[..7].iter().all(|&b| b != wraps), "{blocks:?}");
-    assert!(blocks[7..].iter().all(|&b| b == wraps), "{blocks:?}");
+    assert_eq!(
+        wide_loads(&memory),
+        [
+            (None, Some(3)),
+            (None, Some(3)),
+            (None, Some(15)),
+            (None, Some(15)),
+            (None, Some(15)),
+            (None, Some(15)),
+        ]
+    );
+    let [blocks, table] = &memory.raw_loads;
+    let (first, crossing) = (table[1], table[3]);
+    assert!(first == table[2] && crossing == table[4] && crossing != first, "{table:?}");
+    let run = blocks.iter().position(|&b| b != first && b != crossing).expect("the run's loads");
+    let wraps = *blocks.last().expect("loads");
+    assert!(wraps != blocks[run], "{blocks:?}");
+    // Four loads of four with four of one each, then sixteen pairs of one.
+    assert_eq!(blocks.iter().filter(|&&b| b == blocks[run]).count(), 4 * 5, "{blocks:?}");
+    assert_eq!(blocks.iter().filter(|&&b| b == wraps).count(), 16 * 2, "{blocks:?}");
+    let at_wraps = blocks.len() - 32;
+    assert_eq!(memory.raw_load_args[at_wraps..], [(None, Some(1)); 32]);
 }
 
 /// Constants at a computed offset of a constant buffer view load each row
