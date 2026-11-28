@@ -318,7 +318,43 @@ pub(in crate::emit) fn fixture(spoiler: Spoiler) -> Vec<u32> {
     w
 }
 
-/// [`fixture`]'s console results, per lane: the passes and the first lane.
+/// [`fixture`] with a second way out of its loop, a uniform `break` in the
+/// body before the exit test (`s_cmp_gt_u32 s12, 64` and `s_cbranch_scc1`
+/// to the loop's exit block). The first lane's id `s12` is below 40, so it
+/// is never taken and the console results are [`console_fixture`]'s.
+/// #591's lockstep forms take loops with one exit only
+/// (`match_lockstep_loop`, `match_lockstep_while_loop`), so they leave
+/// this loop to [`Lower::leave_loops_at_entry`]; they take [`fixture`]'s
+/// own loop (`CS_VisHair`'s), whose early-exited lanes they already let go.
+#[cfg(test)]
+pub(in crate::emit) fn fixture_with_a_break(spoiler: Spoiler) -> Vec<u32> {
+    let mut w = fixture(spoiler);
+    // Before the body's `v_cmpx_ge_f32 0, v15`.
+    let at = w
+        .iter()
+        .position(|&x| x == 0x7C2C_1E80)
+        .expect("the exit test");
+    w.splice(at..at, [0xBF08_C00C, 0]); // s_cmp_gt_u32 s12, 64; s_cbranch_scc1 exit
+    let execz = w
+        .iter()
+        .position(|&x| x >> 16 == 0xBF88)
+        .expect("s_cbranch_execz");
+    w[execz] += 2;
+    let back = w
+        .iter()
+        .rposition(|&x| x >> 16 == 0xBF85)
+        .expect("s_cbranch_scc1 latch");
+    w[back] = 0xBF85_0000 | (w[back].wrapping_sub(2) & 0xFFFF);
+    let exit = w
+        .iter()
+        .position(|&x| x == 0xBEFE_0418)
+        .expect("s_mov_b64 exec, s[24:25]");
+    w[at + 1] = 0xBF85_0000 | ((exit - (at + 2)) as u32 & 0xFFFF);
+    w
+}
+
+/// [`fixture`]'s console results, per lane: the passes and the first lane
+/// (also [`fixture_with_a_break`]'s, whose break is never taken).
 #[cfg(all(test, windows))]
 pub(in crate::emit) fn console_fixture(l: u32) -> [u32; 2] {
     if l < 40 { [(l & 7) + 1, 0] } else { [0, 0] }
@@ -326,7 +362,7 @@ pub(in crate::emit) fn console_fixture(l: u32) -> [u32; 2] {
 
 #[cfg(test)]
 mod tests {
-    use super::{Spoiler, fixture, natural_loop, refusal};
+    use super::{Spoiler, fixture, fixture_with_a_break, natural_loop, refusal};
     use crate::emit::lower::{self, Parts};
     use crate::native::{
         ComputeIo, HwStage, NativeProgram, ResourceType, RootParam, RootType, StageIo, UsedResource,
@@ -539,15 +575,47 @@ mod tests {
         }
     }
 
-    /// With the switch, the fixture's one loop exit is rewritten; without
-    /// it, or where the loop does not allow it, none is.
+    /// With the switch, the exit test of the fixture with a break is
+    /// rewritten; without it, or where the loop does not allow it, none is.
+    /// The plain fixture's loop runs in lockstep (#591) and is left alone.
     #[test]
     fn the_loop_exit_is_rewritten_only_with_the_switch_and_where_exact() {
-        let plain = fixture(Spoiler::None);
+        let plain = fixture_with_a_break(Spoiler::None);
         assert_eq!(rewritten(&plain, false), 0);
         assert_eq!(rewritten(&plain, true), 1);
-        assert_eq!(rewritten(&fixture(Spoiler::ScalarAfter), true), 0);
-        assert_eq!(rewritten(&fixture(Spoiler::NeighbourInside), true), 0);
-        assert_eq!(rewritten(&fixture(Spoiler::SampleInside), true), 0);
+        assert_eq!(
+            rewritten(&fixture_with_a_break(Spoiler::ScalarAfter), true),
+            0
+        );
+        assert_eq!(
+            rewritten(&fixture_with_a_break(Spoiler::NeighbourInside), true),
+            0
+        );
+        assert_eq!(
+            rewritten(&fixture_with_a_break(Spoiler::SampleInside), true),
+            0
+        );
+        assert_eq!(rewritten(&fixture(Spoiler::None), true), 0);
+    }
+
+    /// The break lands on the loop's exit block, the exit test still goes
+    /// back to the latch, and the early exit still goes to the end.
+    #[test]
+    fn the_fixture_with_a_break_is_the_fixture_with_a_second_exit() {
+        let (w, s) = (fixture(Spoiler::None), fixture_with_a_break(Spoiler::None));
+        assert_eq!(s.len(), w.len() + 2);
+        let to =
+            |w: &[u32], at: usize| (at as isize + 1 + isize::from(w[at] as u16 as i16)) as usize;
+        let scc1: Vec<usize> = (0..s.len()).filter(|&k| s[k] >> 16 == 0xBF85).collect();
+        let [brk, back] = scc1[..] else {
+            panic!("{scc1:?}")
+        };
+        assert_eq!(s[to(&s, brk)], 0xBEFE_0418);
+        assert_eq!(s[to(&s, back)], 0x87FE_1416);
+        let execz = |w: &[u32]| {
+            let at = w.iter().position(|&x| x >> 16 == 0xBF88).expect("execz");
+            w[to(w, at)]
+        };
+        assert_eq!((execz(&w), execz(&s)), (0xBF81_0000, 0xBF81_0000));
     }
 }

@@ -4096,8 +4096,10 @@ fn lowered_entry_exit(
     lower::lower_limited(&parts, None, false, false, false)
 }
 
-/// `CS_VisHair`'s shape ([`lower::entry_exit::fixture`]): lanes an early
-/// exit left run no pass of the later loop on the console. In halves they
+/// `CS_VisHair`'s shape with a second, uniform way out of the loop
+/// ([`lower::entry_exit::fixture_with_a_break`], never taken, so #591's
+/// lockstep form leaves the loop alone): lanes an early exit left run no
+/// pass of the later loop on the console. In halves they
 /// are kept on predicated, and their stale positive counter never meets
 /// the loop's test: without the switch they run to the loop limit, with it
 /// they leave at the first test. Both give the console's results on every
@@ -4107,8 +4109,8 @@ fn lowered_entry_exit(
 #[test]
 #[cfg(windows)]
 fn early_exited_lanes_leave_a_later_loop_as_the_console_on_every_gpu() {
-    use lower::entry_exit::{Spoiler, console_fixture, fixture};
-    let words = fixture(Spoiler::None);
+    use lower::entry_exit::{Spoiler, console_fixture, fixture_with_a_break};
+    let words = fixture_with_a_break(Spoiler::None);
     let n = native(&words, true, 64, 0);
     let on = lowered_entry_exit(&n, true).expect("halves, entry exit");
     let off = lowered_entry_exit(&n, false).expect("halves");
