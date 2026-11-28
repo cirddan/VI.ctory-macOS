@@ -2139,6 +2139,7 @@ fn lower_test_cs(native: &NativeProgram, view_marks: bool) -> (lower::Lowered, H
         narrow_waves: false,
         uav_size_level0: false,
         host_wave32: false,
+        loop_entry_exit: false,
         view_marks,
     })
     .expect("lower");
@@ -2609,6 +2610,7 @@ fn wave_coalesced_pixel_marks_handle_partial_quads_and_all_helper_waves() {
         narrow_waves: false,
         uav_size_level0: false,
         host_wave32: false,
+        loop_entry_exit: false,
         view_marks: false,
     })
     .expect("vs lower");
@@ -2721,6 +2723,7 @@ fn wave_coalesced_pixel_marks_handle_partial_quads_and_all_helper_waves() {
         narrow_waves: false,
         uav_size_level0: false,
         host_wave32: false,
+        loop_entry_exit: false,
         view_marks: true,
     })
     .expect("ps lower");
